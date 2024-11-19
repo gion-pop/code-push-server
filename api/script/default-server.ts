@@ -16,6 +16,8 @@ const domain = require("express-domain-middleware");
 import * as express from "express";
 import * as q from "q";
 
+const pathPrefix = process.env.PATH_PREFIX || "/codepush";
+
 interface Secret {
   id: string;
   value: string;
@@ -60,7 +62,7 @@ export function start(done: (err?: any, server?: express.Express, storage?: Stor
     })
     .then(() => {
       const app = express();
-      const auth = api.auth({ storage: storage });
+      const auth = api.auth({ storage: storage, pathPrefix });
       const appInsights = api.appInsights();
       const redisManager = new RedisManager();
 
@@ -123,19 +125,19 @@ export function start(done: (err?: any, server?: express.Express, storage?: Stor
       // Before all other middleware to ensure all requests are tracked.
       app.use(appInsights.router());
 
-      app.get("/", (req: express.Request, res: express.Response, next: (err?: Error) => void): any => {
+      app.get(`${pathPrefix}/`, (req: express.Request, res: express.Response, next: (err?: Error) => void): any => {
         res.send("Welcome to the CodePush REST API!");
       });
 
       app.set("etag", false);
       app.set("views", __dirname + "/views");
       app.set("view engine", "ejs");
-      app.use("/auth/images/", express.static(__dirname + "/views/images"));
+      app.use(`${pathPrefix}/auth/images/`, express.static(__dirname + "/views/images"));
       app.use(api.headers({ origin: process.env.CORS_ORIGIN || "http://localhost:4000" }));
-      app.use(api.health({ storage: storage, redisManager: redisManager }));
+      app.use(`${pathPrefix}`, api.health({ storage: storage, redisManager: redisManager }));
 
       if (process.env.DISABLE_ACQUISITION !== "true") {
-        app.use(api.acquisition({ storage: storage, redisManager: redisManager }));
+        app.use(`${pathPrefix}`, api.acquisition({ storage: storage, redisManager: redisManager }));
       }
 
       if (process.env.DISABLE_MANAGEMENT !== "true") {
@@ -155,11 +157,16 @@ export function start(done: (err?: any, server?: express.Express, storage?: Stor
             next();
           });
         } else {
-          app.use(auth.router());
+          app.use(`${pathPrefix}`, auth.router(pathPrefix));
         }
-        app.use(auth.authenticate, fileUploadMiddleware, api.management({ storage: storage, redisManager: redisManager }));
+        app.use(
+          `${pathPrefix}`,
+          auth.authenticate,
+          fileUploadMiddleware,
+          api.management({ storage: storage, redisManager: redisManager, pathPrefix })
+        );
       } else {
-        app.use(auth.legacyRouter());
+        app.use(`${pathPrefix}`, auth.legacyRouter());
       }
 
       // Error handler needs to be the last middleware so that it can catch all unhandled exceptions

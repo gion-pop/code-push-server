@@ -9,7 +9,7 @@ import * as passportBearer from "passport-http-bearer";
 import * as passportGitHub from "passport-github2";
 import * as passportWindowsLive from "passport-windowslive";
 import * as q from "q";
-import * as superagent from "superagent"
+import * as superagent from "superagent";
 import rateLimit from "express-rate-limit";
 
 import * as converterUtils from "../utils/converter";
@@ -23,6 +23,7 @@ import Promise = q.Promise;
 
 export interface AuthenticationConfig {
   storage: storage.Storage;
+  pathPrefix: string;
 }
 
 const DEFAULT_SESSION_EXPIRY = 1000 * 60 * 60 * 24 * 60; // 60 days
@@ -46,6 +47,7 @@ export class PassportAuthentication {
   private _cookieSessionMiddleware: RequestHandler;
   private _serverUrl: string;
   private _storageInstance: storage.Storage;
+  private _pathPrefix: string;
 
   constructor(config: AuthenticationConfig) {
     this._serverUrl = process.env["SERVER_URL"];
@@ -61,6 +63,7 @@ export class PassportAuthentication {
       overwrite: true,
     });
     this._storageInstance = config.storage;
+    this._pathPrefix = config.pathPrefix;
 
     passport.use(
       new passportBearer.Strategy((accessKey: string, done: (error: any, user?: any) => void) => {
@@ -167,17 +170,17 @@ export class PassportAuthentication {
 
     router.get("/auth/login", this._cookieSessionMiddleware, (req: Request, res: Response): any => {
       req.session["hostname"] = req.query.hostname;
-      res.render("authenticate", { action: "login", isGitHubAuthenticationEnabled, isMicrosoftAuthenticationEnabled });
+      res.render("authenticate", { action: "login", pathPrefix: this._pathPrefix, isGitHubAuthenticationEnabled, isMicrosoftAuthenticationEnabled });
     });
 
     router.get("/auth/link", this._cookieSessionMiddleware, (req: Request, res: Response): any => {
       req.session["authorization"] = req.query.access_token;
-      res.render("authenticate", { action: "link", isGitHubAuthenticationEnabled, isMicrosoftAuthenticationEnabled });
+      res.render("authenticate", { action: "link", pathPrefix: this._pathPrefix, isGitHubAuthenticationEnabled, isMicrosoftAuthenticationEnabled });
     });
 
     router.get("/auth/register", this._cookieSessionMiddleware, (req: Request, res: Response): any => {
       req.session["hostname"] = req.query.hostname;
-      res.render("authenticate", { action: "register", isGitHubAuthenticationEnabled, isMicrosoftAuthenticationEnabled });
+      res.render("authenticate", { action: "register", pathPrefix: this._pathPrefix, isGitHubAuthenticationEnabled, isMicrosoftAuthenticationEnabled });
     });
 
     return router;
@@ -260,7 +263,7 @@ export class PassportAuthentication {
     );
 
     router.get(
-      "/auth/register/" + providerName, 
+      "/auth/register/" + providerName,
       limiter,
       this._cookieSessionMiddleware,
       (req: Request, res: Response, next: (err?: any) => void): any => {
@@ -290,7 +293,7 @@ export class PassportAuthentication {
       "/auth/callback/" + providerName,
       limiter,
       this._cookieSessionMiddleware,
-      passport.authenticate(strategyName, { failureRedirect: "/auth/login/" + providerName, session: false }),
+      passport.authenticate(strategyName, { failureRedirect: `${this._pathPrefix}/auth/login/` + providerName, session: false }),
       (req: Request, res: Response, next: (err?: any) => void): any => {
         const action: string = req.session["action"];
         const hostname: string = req.session["hostname"];
@@ -335,7 +338,7 @@ export class PassportAuthentication {
             req.session["accessKey"] = key;
             req.session["isNewAccount"] = action === "register";
 
-            res.redirect("/accesskey");
+            res.redirect(`${this._pathPrefix}/accesskey`);
           });
         };
 
@@ -350,8 +353,8 @@ export class PassportAuthentication {
                   const message: string = isProviderValid
                     ? "You are already registered with the service using this authentication provider.<br/>Please cancel the registration process (Ctrl-C) on the CLI and login with your account."
                     : "You are already registered with the service using a different authentication provider." +
-                    "<br/>Please cancel the registration process (Ctrl-C) on the CLI and login with your registered account." +
-                    "<br/>Once logged in, you can optionally link this provider to your account.";
+                      "<br/>Please cancel the registration process (Ctrl-C) on the CLI and login with your registered account." +
+                      "<br/>Once logged in, you can optionally link this provider to your account.";
                   restErrorUtils.sendAlreadyExistsPage(res, message);
                   return;
                 case "link":
@@ -393,7 +396,7 @@ export class PassportAuthentication {
                   restErrorUtils.sendForbiddenPage(
                     res,
                     "We weren't able to link your account, because the primary email address registered with your provider does not match the one on your CodePush account." +
-                    "<br/>Please use a matching email address, or contact us if you'd like to change the email address on your CodePush account."
+                      "<br/>Please use a matching email address, or contact us if you'd like to change the email address on your CodePush account."
                   );
                   return;
                 case "register":
