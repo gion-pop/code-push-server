@@ -744,6 +744,14 @@ export class JsonStorage implements storage.Storage {
     if (!this._blobServerPromise) {
       const app: express.Express = express();
 
+      if (process.env.LOGGING) {
+        app.use((req: express.Request, res: express.Response, next: (err?: any) => void): any => {
+          console.log(); // Newline to mark new request
+          console.log(`[REST] Received ${req.method} request at ${req.originalUrl}`);
+          next();
+        });
+      }
+
       app.get("/:blobId", (req: express.Request, res: express.Response, next: (err?: Error) => void): any => {
         const blobId: string = req.params.blobId;
         const fileName = path.join(storageDir, blobDirName, blobId);
