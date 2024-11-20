@@ -3,15 +3,21 @@
 
 import * as express from "express";
 import * as fs from "fs";
+import * as path from "path";
 import * as http from "http";
 import * as q from "q";
 import * as stream from "stream";
-
+import * as utils from "../utils/common";
+import { pipeline } from "node:stream";
 import * as storage from "./storage";
 
 import clone = storage.clone;
 import Promise = q.Promise;
 import { isPrototypePollutionKey } from "./storage";
+
+const storageDir = "./jsonStorage";
+const jsonFilePath = path.join(storageDir, "JsonStorage.json");
+const blobDirName = "blobs";
 
 function merge(original: any, updates: any): void {
   for (const property in updates) {
@@ -25,7 +31,7 @@ export class JsonStorage implements storage.Storage {
   public apps: { [id: string]: storage.App } = {};
   public deployments: { [id: string]: storage.Deployment } = {};
   public packages: { [id: string]: storage.Package } = {};
-  public blobs: { [id: string]: string } = {};
+  public blobs: { [id: string]: boolean } = {};
   public accessKeys: { [id: string]: storage.AccessKey } = {};
 
   public accountToAppsMap: { [id: string]: string[] } = {};
@@ -51,13 +57,16 @@ export class JsonStorage implements storage.Storage {
 
   private loadStateAsync(): void {
     if (this.disablePersistence) return;
+    if (!fs.existsSync(storageDir)) {
+      fs.mkdirSync(storageDir);
+    }
 
     fs.exists(
-      "JsonStorage.json",
+      jsonFilePath,
       function (exists: boolean) {
         if (exists) {
           fs.readFile(
-            "JsonStorage.json",
+            jsonFilePath,
             function (err: any, data: string) {
               if (err) throw err;
 
@@ -107,7 +116,7 @@ export class JsonStorage implements storage.Storage {
     };
 
     const str = JSON.stringify(obj);
-    fs.writeFile("JsonStorage.json", str, function (err) {
+    fs.writeFile(jsonFilePath, str, function (err) {
       if (err) throw err;
     });
   }
@@ -529,22 +538,30 @@ export class JsonStorage implements storage.Storage {
   }
 
   public addBlob(blobId: string, stream: stream.Readable, streamLength: number): Promise<string> {
-    this.blobs[blobId] = "";
     return q.Promise<string>((resolve: (blobId: string) => void) => {
-      stream
-        .on("data", (data: string) => {
-          this.blobs[blobId] += data;
-        })
-        .on("end", () => {
+      const writable: fs.WriteStream = fs.createWriteStream(path.join(storageDir, blobDirName, blobId));
+      pipeline(stream, writable, (err) => {
+        if (err) {
+          throw err;
+        } else {
+          this.blobs[blobId] = true;
+          this.saveStateAsync();
           resolve(blobId);
-        });
-      this.saveStateAsync();
+        }
+      });
     });
   }
 
   public getBlobUrl(blobId: string): Promise<string> {
     return this.getBlobServer().then((server: http.Server) => {
-      return server.address() + "/" + blobId;
+      const address = server.address();
+      if (!address) {
+        throw new Error("Server address not found");
+      } else if (typeof address === "string") {
+        return address + "/" + blobId;
+      } else {
+        return `http://localhost:${address.port}/${blobId}`;
+      }
     });
   }
 
@@ -729,15 +746,30 @@ export class JsonStorage implements storage.Storage {
 
       app.get("/:blobId", (req: express.Request, res: express.Response, next: (err?: Error) => void): any => {
         const blobId: string = req.params.blobId;
-        if (this.blobs[blobId]) {
-          res.send(this.blobs[blobId]);
-        } else {
+        const fileName = path.join(storageDir, blobDirName, blobId);
+        if (!fs.existsSync(fileName)) {
           res.sendStatus(404);
         }
+        const fstat = fs.promises
+          .stat(fileName)
+          .then((stats) => {
+            res.writeHead(200, {
+              "Content-Type": "application/octet-stream",
+              "Content-Length": stats.size,
+            });
+            pipeline(fs.createReadStream(fileName), res, (err: NodeJS.ErrnoException | null) => {
+              if (err && err.code !== "ECONNRESET") {
+                console.error(err);
+              }
+            });
+          })
+          .catch((err) => {
+            throw err;
+          });
       });
 
       const deferred: q.Deferred<http.Server> = q.defer<http.Server>();
-      const server: http.Server = app.listen(0, () => {
+      const server: http.Server = app.listen(30000, () => {
         deferred.resolve(server);
       });
 
