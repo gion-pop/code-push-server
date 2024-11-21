@@ -36,7 +36,11 @@ function bodyParserErrorHandler(err: any, req: express.Request, res: express.Res
   }
 }
 
-export function start(done: (err?: any, server?: express.Express, storage?: Storage) => void, useJsonStorage?: boolean): void {
+export function start(
+  done: (err?: any, server?: express.Express, storage?: Storage) => void,
+  useJsonStorage?: boolean,
+  disableJsonStoragePersistence: boolean = true
+): void {
   let storage: Storage;
   let isKeyVaultConfigured: boolean;
   let keyvaultClient: any;
@@ -44,7 +48,7 @@ export function start(done: (err?: any, server?: express.Express, storage?: Stor
   q<void>(null)
     .then(async () => {
       if (useJsonStorage) {
-        storage = new JsonStorage();
+        storage = new JsonStorage(disableJsonStoragePersistence);
       } else if (!process.env.AZURE_KEYVAULT_ACCOUNT) {
         storage = new AzureStorage();
       } else {
